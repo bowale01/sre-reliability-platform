@@ -1,0 +1,48 @@
+{{- if .Values.rollout.enabled }}
+# Canary strategy needs a stable and a canary Service; the rollout controller
+# manages their endpoints and the ALB weight split between them.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "demo-service.fullname" . }}-stable
+  labels:
+    {{- include "demo-service.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "demo-service.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "demo-service.fullname" . }}-canary
+  labels:
+    {{- include "demo-service.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "demo-service.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+{{- else }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "demo-service.fullname" . }}
+  labels:
+    {{- include "demo-service.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "demo-service.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+{{- end }}

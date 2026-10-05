@@ -1,0 +1,124 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-service
+  namespace: demo
+  labels:
+    app.kubernetes.io/name: demo-service
+    tags.datadoghq.com/service: demo-service
+    tags.datadoghq.com/env: prod
+    tags.datadoghq.com/version: "1.0.0"
+spec:
+  replicas: 3
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: demo-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Zero-downtime: never take a pod down before a replacement is Ready.
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: demo-service
+        tags.datadoghq.com/service: demo-service
+        tags.datadoghq.com/env: prod
+        tags.datadoghq.com/version: "1.0.0"
+      annotations:
+        # Datadog Autodiscovery: scrape Prometheus metrics from the pod.
+        ad.datadoghq.com/demo-service.checks: |
+          {
+            "openmetrics": {
+              "init_config": {},
+              "instances": [
+                {
+                  "openmetrics_endpoint": "http://%%host%%:8080/metrics",
+                  "namespace": "demo_service",
+                  "metrics": [".*"]
+                }
+              ]
+            }
+          }
+        # Datadog log collection with source/service.
+        ad.datadoghq.com/demo-service.logs: |
+          [{"source":"python","service":"demo-service"}]
+    spec:
+      # Spread pods across nodes/AZs so a single node loss can't take the service down.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: demo-service
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: demo-service
+          image: REPLACE_WITH_ECR_URL:latest  # set by CI (see .github/workflows/deploy.yaml)
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: SERVICE_NAME
+              value: "demo-service"
+            # Keep a small, realistic amount of injected latency/faults so SLIs move.
+            - name: FAULT_INJECTION
+              value: "0.01"
+            - name: LATENCY_SLOW_RATIO
+              value: "0.05"
+            - name: LATENCY_SLOW_MS
+              value: "400"
+            # Datadog unified service tagging + agent host (via downward API).
+            - name: DD_ENV
+              value: "prod"
+            - name: DD_SERVICE
+              value: "demo-service"
+            - name: DD_VERSION
+              value: "1.0.0"
+            - name: DD_AGENT_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          # Liveness: restart the container if the process wedges.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          # Readiness: pull from the Service endpoints when not ready (gates rollout).
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 3
+          # Startup: give slow starts room without loosening liveness.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 30
+            periodSeconds: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

@@ -1,0 +1,52 @@
+{{- if and .Values.rollout.enabled .Values.rollout.canary.analysis.enabled }}
+# ---------------------------------------------------------------------------
+# SLO-gated canary analysis.
+#
+# While the canary takes a slice of traffic, Argo Rollouts runs this analysis
+# against Datadog every interval. Each metric has a success condition; if a
+# metric fails for `failureLimit` consecutive measurements, the AnalysisRun
+# fails and the Rollout automatically aborts and rolls back to stable.
+#
+# The queries are scoped to the CANARY version so we judge only the new pods.
+# Requires a Datadog metrics provider secret in the rollout controller's
+# namespace (see terraform/50-argocd notes).
+# ---------------------------------------------------------------------------
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ .Values.rollout.canary.analysis.templateName }}
+  labels:
+    {{- include "demo-service.labels" . | nindent 4 }}
+spec:
+  args:
+    - name: service
+    - name: env
+  metrics:
+    # --- Availability: canary 5xx ratio must stay below 1% ---
+    - name: canary-error-rate
+      interval: 1m
+      count: 3
+      failureLimit: 1
+      provider:
+        datadog:
+          apiVersion: v2
+          interval: 5m
+          query: |
+            sum:demo_service.http_requests_total.count{service:{{"{{"}}args.service{{"}}"}},env:{{"{{"}}args.env{{"}}"}},version:canary,status_code:5*}.as_count() /
+            sum:demo_service.http_requests_total.count{service:{{"{{"}}args.service{{"}}"}},env:{{"{{"}}args.env{{"}}"}},version:canary}.as_count()
+      successCondition: result < 0.01
+
+    # --- Latency: at least 99% of canary requests under 300ms ---
+    - name: canary-latency-good-ratio
+      interval: 1m
+      count: 3
+      failureLimit: 1
+      provider:
+        datadog:
+          apiVersion: v2
+          interval: 5m
+          query: |
+            sum:demo_service.http_request_duration_seconds.bucket{service:{{"{{"}}args.service{{"}}"}},env:{{"{{"}}args.env{{"}}"}},version:canary,upper_bound:0.3}.as_count() /
+            sum:demo_service.http_request_duration_seconds.count{service:{{"{{"}}args.service{{"}}"}},env:{{"{{"}}args.env{{"}}"}},version:canary}.as_count()
+      successCondition: result >= 0.99
+{{- end }}

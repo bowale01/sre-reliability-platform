@@ -1,0 +1,28 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "demo-service.fullname" . }}
+  labels:
+    {{- include "demo-service.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                {{- if .Values.rollout.enabled }}
+                # Points at the stable service; Argo Rollouts manages the
+                # weighted split to the canary via the ALB annotations.
+                name: {{ include "demo-service.fullname" . }}-stable
+                {{- else }}
+                name: {{ include "demo-service.fullname" . }}
+                {{- end }}
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}

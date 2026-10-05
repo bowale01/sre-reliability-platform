@@ -1,0 +1,90 @@
+name: build-and-release
+
+# GitOps delivery.
+#
+# CI's job is NOT to deploy. It builds the image, pushes it to ECR, and bumps
+# the image tag in the Helm chart's values.yaml with a Git commit. ArgoCD
+# watches the repo and reconciles the cluster to match — and because the
+# workload is an Argo Rollouts canary, the new version is rolled out gradually
+# and automatically aborted if it breaches the SLOs.
+#
+# CI (this file)                      CD (ArgoCD, in-cluster)
+# ──────────────                      ───────────────────────
+# build image -> push to ECR          detects the values.yaml change
+# bump image.tag in values.yaml  ───► syncs -> Argo Rollouts canary
+# commit + push to main               SLO analysis -> promote or rollback
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "service/**"
+      - ".github/workflows/deploy.yaml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # AWS OIDC
+  contents: write   # commit the values.yaml bump back to the repo
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO: sre-demo/demo-service
+  VALUES_FILE: charts/demo-service/values.yaml
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        id: image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          IMAGE_TAG="${GITHUB_SHA::12}"
+          REPO_URI="${REGISTRY}/${ECR_REPO}"
+          docker build -t "${REPO_URI}:${IMAGE_TAG}" ./service
+          docker push "${REPO_URI}:${IMAGE_TAG}"
+          echo "repo_uri=${REPO_URI}" >> "$GITHUB_OUTPUT"
+          echo "tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Install yq
+        uses: mikefarah/yq@v4.44.3
+
+      - name: Bump image in Helm values (GitOps)
+        run: |
+          yq -i '.image.repository = "${{ steps.image.outputs.repo_uri }}"' "${VALUES_FILE}"
+          yq -i '.image.tag = "${{ steps.image.outputs.tag }}"' "${VALUES_FILE}"
+          # Track the deployed version for Datadog unified tagging + canary analysis.
+          yq -i '.datadog.version = "${{ steps.image.outputs.tag }}"' "${VALUES_FILE}"
+          yq -i '.version = "${{ steps.image.outputs.tag }}"' "${VALUES_FILE}"
+
+      - name: Commit and push the release
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- "${VALUES_FILE}"; then
+            echo "No image change to release."
+            exit 0
+          fi
+          git add "${VALUES_FILE}"
+          git commit -m "release: demo-service ${{ steps.image.outputs.tag }}"
+          git push origin HEAD:main
+
+      - name: Summary
+        run: |
+          echo "### Released demo-service" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Image: ${{ steps.image.outputs.repo_uri }}:${{ steps.image.outputs.tag }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- ArgoCD will sync and Argo Rollouts will run the SLO-gated canary." >> "$GITHUB_STEP_SUMMARY"

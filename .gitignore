@@ -1,0 +1,14 @@
+# Deployment secrets — never commit
+deploy/config.sh
+
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+.terraformrc
+terraform.rc
+
+# Local env
+*.bak

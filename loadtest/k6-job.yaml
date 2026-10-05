@@ -1,0 +1,31 @@
+# Run the k6 load test from inside the cluster as a Job, so traffic hits the
+# in-cluster Service directly (or point BASE_URL at the public ALB).
+#
+# Load the script via a ConfigMap:
+#   kubectl -n demo create configmap k6-script --from-file=load.js=loadtest/load.js
+#   kubectl apply -f loadtest/k6-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-loadtest
+  namespace: demo
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: grafana/k6:0.53.0
+          args: ["run", "/scripts/load.js"]
+          env:
+            # Hit the stable Service inside the cluster.
+            - name: BASE_URL
+              value: "http://demo-service-stable.demo.svc.cluster.local"
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: k6-script

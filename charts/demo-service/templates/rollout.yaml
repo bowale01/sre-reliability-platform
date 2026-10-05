@@ -1,0 +1,61 @@
+{{- if .Values.rollout.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ include "demo-service.fullname" . }}
+  labels:
+    {{- include "demo-service.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "demo-service.selectorLabels" . | nindent 6 }}
+  template:
+    {{- include "demo-service.podTemplate" . | nindent 4 }}
+  strategy:
+    canary:
+      # Two Services (stable + canary) are managed by the rollout controller;
+      # the AWS LB Controller splits ALB traffic between them by weight.
+      canaryService: {{ include "demo-service.fullname" . }}-canary
+      stableService: {{ include "demo-service.fullname" . }}-stable
+      trafficRouting:
+        alb:
+          ingress: {{ include "demo-service.fullname" . }}
+          servicePort: {{ .Values.service.port }}
+      steps:
+        {{- toYaml .Values.rollout.canary.steps | nindent 8 }}
+      {{- if .Values.rollout.canary.analysis.enabled }}
+      # Run the SLO analysis continuously once the canary starts taking traffic.
+      # If the AnalysisRun fails (SLI breach), the rollout aborts and rolls back.
+      analysis:
+        startingStep: 1
+        templates:
+          - templateName: {{ .Values.rollout.canary.analysis.templateName }}
+        args:
+          - name: service
+            value: {{ .Values.datadog.service }}
+          - name: env
+            value: {{ .Values.datadog.env }}
+      {{- end }}
+{{- else }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "demo-service.fullname" . }}
+  labels:
+    {{- include "demo-service.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "demo-service.selectorLabels" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    {{- include "demo-service.podTemplate" . | nindent 4 }}
+{{- end }}

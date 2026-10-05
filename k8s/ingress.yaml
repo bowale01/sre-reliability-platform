@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-service
+  namespace: demo
+  annotations:
+    # Provisioned by the AWS Load Balancer Controller (installed in 20-eks).
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    # ALB health check hits the readiness endpoint.
+    alb.ingress.kubernetes.io/healthcheck-path: /readyz
+    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
+    alb.ingress.kubernetes.io/success-codes: "200"
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: demo-service
+                port:
+                  number: 80

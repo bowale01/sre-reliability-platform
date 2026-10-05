@@ -1,0 +1,43 @@
+# EC2NodeClass: the AWS-specific template Karpenter uses to launch nodes.
+# It discovers subnets and security groups by the karpenter.sh/discovery tag
+# applied in 10-foundation (subnets) and 20-eks (node security group).
+#
+# Replace REPLACE_WITH_KARPENTER_NODE_ROLE with the output
+# `karpenter_node_iam_role_name` from terraform/25-karpenter.
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  # Amazon Linux 2023 nodes.
+  amiFamily: AL2023
+  amiSelectorTerms:
+    - alias: al2023@latest
+
+  role: REPLACE_WITH_KARPENTER_NODE_ROLE
+
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: sre-demo
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: sre-demo
+
+  # Tag everything Karpenter launches for cost allocation and discovery.
+  tags:
+    karpenter.sh/discovery: sre-demo
+    Project: sre-demo
+    ManagedBy: karpenter
+
+  # Encrypted root volume with sensible defaults.
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: 30Gi
+        volumeType: gp3
+        encrypted: true
+        deleteOnTermination: true
+
+  metadataOptions:
+    httpEndpoint: enabled
+    httpTokens: required # IMDSv2 only
